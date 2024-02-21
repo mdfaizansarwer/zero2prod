@@ -1,26 +1,67 @@
 //! tests/health_check.rs
 
-use sqlx::{Connection, PgConnection};
+use sqlx::{Connection, Executor, PgConnection, PgPool};
 use std::net::TcpListener;
-use zero2prod::{configuration::get_configuration, startup::run};
+use uuid::Uuid;
+use zero2prod::{
+    configuration::{get_configuration, DatabaseSettings},
+    startup::run,
+};
 
-fn spawn_app() -> String {
+pub struct TestApp {
+    pub address: String,
+    pub db_pool: PgPool,
+}
+
+async fn spawn_app() -> TestApp {
     let listener = TcpListener::bind("127.0.0.1:0").expect("Failed to bind random port");
     let port = listener.local_addr().unwrap().port();
-    let server = run(listener).expect("Failed to create address");
+    let address = format!("http://127.0.0.1:{}", port);
+
+    let mut configuration = get_configuration().expect("Failed to get configuration");
+    configuration.database.database_name = Uuid::new_v4().to_string();
+    let db_pool = configure_database(&configuration.database).await;
+
+    let server = run(listener, db_pool.clone()).expect("Failed to create address");
     let _ = tokio::spawn(server);
-    format!("http://127.0.0.1:{}", port)
+    TestApp { address, db_pool }
+}
+
+pub async fn configure_database(config: &DatabaseSettings) -> PgPool {
+    // Create the database
+    let mut connection = PgConnection::connect(&config.connection_string_without_db())
+        .await
+        .expect("Failed to connect with Postgres");
+
+    connection
+        .execute(&*format!(
+            r#"create database "{}";"#,
+            config.database_name.as_str()
+        ))
+        .await
+        .expect("Failed to connect with database");
+
+    // Migrate all the changes to this database
+    let connection_pool = PgPool::connect(&config.connection_string())
+        .await
+        .expect("Failed to connection with postgres");
+    sqlx::migrate!("./migrations")
+        .run(&connection_pool)
+        .await
+        .expect("Failed to run the migration");
+
+    connection_pool
 }
 
 #[tokio::test]
 async fn health_check_works() {
     // Arrange
-    let address = spawn_app();
+    let app = spawn_app().await;
     let client = reqwest::Client::new();
 
     // Act
     let response = client
-        .get(&format!("{}/health_check", &address))
+        .get(&format!("{}/health_check", &app.address))
         .send()
         .await
         .expect("Failed to execute request");
@@ -33,20 +74,15 @@ async fn health_check_works() {
 #[tokio::test]
 async fn subscribe_returns_200_for_valid_form_data() {
     // Arrange
-    let address = spawn_app();
+    let app = spawn_app().await;
     let configuration = get_configuration().expect("Failed to read configuration");
-    let connection_string = configuration.database.connection_string();
-    // The 'Connection' trait MUST be in scope for us to invoke
-    // 'PgConnection::connect' - it is not an inherent method of the
-    let mut connection = PgConnection::connect(&connection_string)
-        .await
-        .expect("Faild to connect to postgres.");
+
     let client = reqwest::Client::new();
 
     // Act
     let body = "name=faizan&email=faizan%40test.com";
     let response = client
-        .post(&format!("{}/subscriptions", &address))
+        .post(&format!("{}/subscriptions", &app.address))
         .header("Content-Type", "application/x-www-form-urlencoded")
         .body(body)
         .send()
@@ -57,16 +93,17 @@ async fn subscribe_returns_200_for_valid_form_data() {
     assert_eq!(200, response.status().as_u16());
 
     let saved = sqlx::query!("SELECT name, email from subscriptions",)
-        .fetch_one(&mut connection)
+        .fetch_one(&app.db_pool)
         .await
         .expect("Failed to fetch saved subscription");
     assert_eq!(saved.email, "faizan@test.com");
+    assert_eq!(saved.name, "faizan");
 }
 
 #[tokio::test]
 async fn subscribe_returns_400_when_data_is_missing() {
     // Arrange
-    let address = spawn_app();
+    let app = spawn_app().await;
     let client = reqwest::Client::new();
     let test_cases = vec![
         ("emain=faian%40gmail.com", "Missing the name"),
@@ -77,7 +114,7 @@ async fn subscribe_returns_400_when_data_is_missing() {
     for (invalid_data, error_message) in test_cases {
         // Act
         let response = client
-            .post(&format!("{}/subscriptions", &address))
+            .post(&format!("{}/subscriptions", &app.address))
             .body(invalid_data)
             .send()
             .await
