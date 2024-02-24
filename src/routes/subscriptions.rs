@@ -45,8 +45,17 @@ pub async fn subscriptions(
     form: web::Form<FormData>,
     db_pool: web::Data<PgPool>,
 ) -> impl Responder {
+    if !is_valid_name(&form.name) {
+        return HttpResponse::BadRequest().finish();
+    }
     match insert_subsriber(&db_pool, &form).await {
         Ok(_) => HttpResponse::Ok().finish(),
         Err(_) => HttpResponse::InternalServerError().finish(),
     }
+}
+
+pub fn is_valid_name(s: &str) -> bool {
+    let is_empty_or_whitespace = s.trim().is_empty();
+
+    let is_too_long = s.graphemes(true).count() > 256;
 }
