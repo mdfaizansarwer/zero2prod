@@ -1,7 +1,7 @@
+use crate::domain::{NewSubscriber, SubscriberEmail, SubscriberName};
 use actix_web::{web, HttpResponse, Responder};
 use chrono::Utc;
 use sqlx::PgPool;
-use unicode_segmentation::UnicodeSegmentation;
 use uuid::Uuid;
 
 #[derive(serde::Deserialize)]
@@ -12,17 +12,20 @@ pub struct FormData {
 
 #[tracing::instrument(
     name = "Saving new subscriber details in the database",
-    skip(form, db_pool)
+    skip(db_pool, new_subscriber,)
 )]
-pub async fn insert_subsriber(db_pool: &PgPool, form: &FormData) -> Result<(), sqlx::Error> {
+pub async fn insert_subscriber(
+    db_pool: &PgPool,
+    new_subscriber: &NewSubscriber,
+) -> Result<(), sqlx::Error> {
     sqlx::query!(
         r#"
         insert into subscriptions (id, email, name, subscribed_at) 
         values($1, $2, $3, $4)
         "#,
         Uuid::new_v4(),
-        form.email,
-        form.name,
+        new_subscriber.email.as_ref(),
+        new_subscriber.name.as_ref(),
         Utc::now()
     )
     .execute(db_pool)
@@ -32,6 +35,15 @@ pub async fn insert_subsriber(db_pool: &PgPool, form: &FormData) -> Result<(), s
         e
     })?;
     Ok(())
+}
+
+impl TryFrom<FormData> for NewSubscriber {
+    type Error = String;
+    fn try_from(form: FormData) -> Result<NewSubscriber, String> {
+        let name = SubscriberName::parse(form.name)?;
+        let email = SubscriberEmail::parse(form.email)?;
+        Ok(NewSubscriber { name, email })
+    }
 }
 
 #[tracing::instrument(
@@ -46,19 +58,13 @@ pub async fn subscriptions(
     form: web::Form<FormData>,
     db_pool: web::Data<PgPool>,
 ) -> impl Responder {
-    if !is_valid_name(&form.name) {
-        return HttpResponse::BadRequest().finish();
-    }
-    match insert_subsriber(&db_pool, &form).await {
+    let new_subscriber = match form.0.try_into() {
+        Ok(subscriber) => subscriber,
+        Err(_) => return HttpResponse::BadRequest().finish(),
+    };
+
+    match insert_subscriber(&db_pool, &new_subscriber).await {
         Ok(_) => HttpResponse::Ok().finish(),
         Err(_) => HttpResponse::InternalServerError().finish(),
     }
-}
-
-pub fn is_valid_name(s: &str) -> bool {
-    let is_empty_or_whitespace = s.trim().is_empty();
-
-    let is_too_long = s.graphemes(true).count() > 256;
-
-    !(is_empty_or_whitespace || is_too_long)
 }

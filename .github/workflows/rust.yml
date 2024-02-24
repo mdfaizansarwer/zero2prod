@@ -8,11 +8,11 @@ on:
   # this specific branch (a.k.a. book chapter).
   push:
     branches:
-      - docker
+      - 04-data-validation
   pull_request:
     types: [ opened, synchronize, reopened ]
     branches:
-      - docker
+      - 04-data-validation
 env:
   CARGO_TERM_COLOR: always
   SQLX_VERSION: 0.7.1
