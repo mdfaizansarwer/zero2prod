@@ -8,12 +8,11 @@ on:
   # this specific branch (a.k.a. book chapter).
   push:
     branches:
-      - telemetry-integration
+      - docker
   pull_request:
     types: [ opened, synchronize, reopened ]
     branches:
-      - telemetry-integration
-
+      - docker
 env:
   CARGO_TERM_COLOR: always
   SQLX_VERSION: 0.7.1
