@@ -5,7 +5,7 @@ use uuid::Uuid;
 
 #[derive(serde::Deserialize)]
 pub struct FormData {
-    email: String,
+    email: String,https://github.com/mdfaizansarwer/zero2prod/pull/4/conflict?name=Cargo.lock&ancestor_oid=1b10442fc6a597e243bf71cd6e60be1a0f314d7f&base_oid=dbdb419efde9e2f9240aef1542da11085141a57a&head_oid=5d6bd22d382f13ac1800ce5d7e4b073affb938b5
     name: String,
 }
 
